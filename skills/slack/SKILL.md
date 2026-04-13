@@ -1,49 +1,61 @@
 ---
 name: slack
-description: Send messages, read threads, resolve users, and react in Slack
-tools: ["Bash"]
+description: Send and read Slack messages using your personal Slack identity via xoxc + d cookie. No bot accounts, no admin. Use when asked to message, read threads, resolve users, or react in Slack.
 ---
 
 # Slack Skill
 
-Interact with Slack workspaces using xoxc browser tokens. No bot app required for most operations.
+Send messages, read threads, resolve users, and react in Slack.
 
-## Setup
+**Input:** `$ARGUMENTS` — what to do (e.g., "message Michael in thread 1770907663.761449 asking for PR review")
 
-Credentials in `~/.pf-claude-code/slack.env`:
-```
-SLACK_USER_TOKEN=xoxc-...
-SLACK_COOKIE=xd-...
-SLACK_BOT_TOKEN=xoxb-...  # optional, for lookupByEmail
-SLACK_WORKSPACE_URL=https://yourworkspace.slack.com  # optional
-```
+## Workflow
 
-See `skills/slack/README.md` for token extraction steps.
+1. **Resolve people** — before composing ANY message, resolve every person mentioned:
+   ```bash
+   bun run src/slack.ts resolve "user@company.com"
+   ```
+   Returns verified `slack_id` + `<@ID>` mention. **Never guess or remember user IDs** — always resolve first.
 
-## Commands
+2. **Gather context** — if replying to a thread, read it first:
+   ```bash
+   bun run src/slack.ts thread <channel> <ts>
+   ```
 
-Run from the `skills/slack/` directory:
+3. **Compose message** — use only verified `<@ID>` mentions from step 1. Follow Slack mrkdwn rules (below).
+
+4. **Draft and confirm.** Show the destination, full message text, and people tagged. Ask before sending.
+
+5. **Send:**
+   ```bash
+   bun run src/slack.ts send <channel> "<text>" [thread_ts]
+   ```
+
+6. **On feedback** — revise and present again.
+
+## Other Commands
 
 ```bash
-bun run src/slack.ts send <channel> <text> [thread_ts]   # send message (always reply in threads)
-bun run src/slack.ts thread <channel> <ts>                # read thread with resolved names
-bun run src/slack.ts members <channel>                    # list active channel members
-bun run src/slack.ts resolve <name-or-email>              # find user by email (needs bot token)
-bun run src/slack.ts react <channel> <ts> <emoji>         # add emoji reaction
-bun run src/slack.ts delete <channel> <ts>                # delete a message
+bun run src/slack.ts resolve <email>              # look up user
+bun run src/slack.ts thread <channel> <ts>        # read thread with resolved names
+bun run src/slack.ts members <channel>            # list active members
+bun run src/slack.ts react <channel> <ts> <emoji> # add reaction
+bun run src/slack.ts delete <channel> <ts>        # delete message
 ```
 
-## Message Formatting
+## Slack mrkdwn Formatting
 
-Text is validated for Slack mrkdwn. Markdown syntax (`**bold**`, `[text](url)`, `# heading`) is auto-converted.
+Slack uses mrkdwn, NOT standard Markdown:
+- **Links**: `<https://example.com|display text>` (NOT `[text](url)`)
+- **Bold**: `*bold*` (single asterisk, NOT `**`)
+- **Italic**: `_italic_`
+- **Bold link**: `*<https://example.com|text>*`
+- **User mention**: `<@U01SLHHQHD5>`
+- **Channel mention**: `<#C0ADR4VF4KY>`
 
-Use Slack mrkdwn natively:
-- Bold: `*text*`
-- Links: `<https://url|text>`
-- Mentions: `<@U12345>`
-- Code: `` `inline` `` or ` ```block``` `
+Markdown syntax is auto-converted, but prefer native mrkdwn.
 
-## API Functions (import from client.ts)
+## API Quick Reference
 
 | Function | Description |
 |----------|-------------|
@@ -55,14 +67,24 @@ Use Slack mrkdwn natively:
 | `peekThread(ch, ts)` | Full thread (parent + replies) |
 | `readThread(ch, ts)` | Thread replies only |
 | `readChannel(ch, limit?)` | Recent messages |
-| `readChannelHistory(ch, oldest, latest?, limit?)` | Time-range query |
 | `getMessage(ch, ts)` | Single message |
 | `searchMessages(query, opts?)` | Search |
 | `resolveUsers(ids[])` | IDs → names |
-| `resolveChannelMembers(ch)` | Active members |
 | `lookupByEmail(email)` | Email → user (bot token) |
-| `lookupByEmails(emails[])` | Batch email lookup |
-| `openDmChannel(userId)` | Open/get DM channel |
-| `listRecentDMs(limit?)` | Recent DM channels |
 | `slackPermalink(ch, ts)` | Build permalink URL |
-| `authTest()` | Verify credentials |
+
+## Common Mistakes
+
+- `peekThread` returns `{ parent, replies }` — NOT an array. Destructure: `const { parent, replies } = await peekThread(ch, ts)`
+- `users.lookupByEmail` fails with user token — always use `lookupByEmail()` which uses bot token internally.
+- `updateMessage` may escape `<>` in links. Prefer delete + resend when message contains links.
+
+## Slack URL → Timestamp
+
+Slack permalink format: `p1770889672443569` → remove `p`, insert `.` before last 6 digits → `1770889672.443569`
+
+```
+url.replace(/^p/, '').replace(/(\d{6})$/, '.$1')
+```
+
+All functions expect the dotted format (e.g. `1770889672.443569`), never the `p`-prefixed URL format.
